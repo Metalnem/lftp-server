@@ -1,2 +1,2 @@
-# LFTP server
+# LFTP server [![Build Status](https://travis-ci.org/Metalnem/lftp-server.svg?branch=master)](https://travis-ci.org/Metalnem/lftp-server) [![Go Report Card](https://goreportcard.com/badge/github.com/metalnem/lftp-server)](https://goreportcard.com/report/github.com/metalnem/lftp-server) [![license](https://img.shields.io/badge/license-MIT-blue.svg?style=flat)](https://raw.githubusercontent.com/metalnem/lftp-server/master/LICENSE)
 JSON RPC server for LFTP.
