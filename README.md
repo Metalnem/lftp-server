@@ -1,2 +1,2 @@
-# lftp-server
-JSON RPC server for LFTP
+# LFTP server
+JSON RPC server for LFTP.
