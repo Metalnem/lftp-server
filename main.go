@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -11,20 +13,20 @@ import (
 
 // Request represents single request for mirroring one FTP directory or a file.
 type Request struct {
-	URL      string
-	Username string
-	Password string
+	Path     string `json:"path"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 func (request *Request) makeCmd() (*exec.Cmd, error) {
-	if request.URL == "" {
+	if request.Path == "" {
 		return nil, errors.New("No URL specified in a request")
 	}
 
-	url, err := url.Parse(request.URL)
+	url, err := url.Parse(request.Path)
 
 	if err != nil {
-		return nil, fmt.Errorf("Invalid URL: %s", request.URL)
+		return nil, fmt.Errorf("Invalid URL: %s", request.Path)
 	}
 
 	cmd := exec.Command(
@@ -40,26 +42,35 @@ func (request *Request) makeCmd() (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func main() {
-	if _, err := exec.LookPath("lftp"); err != nil {
-		log.Fatal("LFTP not found")
-	}
+func handler(w http.ResponseWriter, r *http.Request) {
+	var request Request
+	decoder := json.NewDecoder(r.Body)
 
-	request := Request{
-		URL:      "ftp://example.org/",
-		Username: "username",
-		Password: "password",
+	if err := decoder.Decode(&request); err != nil {
+		fmt.Fprintln(os.Stderr, "Invalid request received")
+		return
 	}
 
 	cmd, err := request.makeCmd()
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err.Error())
+		return
 	}
 
 	err = cmd.Run()
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err.Error())
+		return
 	}
+}
+
+func main() {
+	if _, err := exec.LookPath("lftp"); err != nil {
+		log.Fatal("LFTP not found")
+	}
+
+	handler := http.HandlerFunc(handler)
+	log.Fatal(http.ListenAndServe(":7800", handler))
 }
