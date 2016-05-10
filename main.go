@@ -111,7 +111,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := generateID()
-	job := Job{ID: id, Cmd: cmd}
+	job := Job{ID: id, Request: request, Cmd: cmd}
 
 	go func() {
 		handler.Jobs <- &job
