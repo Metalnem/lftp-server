@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -36,17 +37,30 @@ func (request *Request) makeCmd() (*exec.Cmd, error) {
 		return nil, fmt.Errorf("Invalid URL: %s", request.Path)
 	}
 
-	cmd := exec.Command(
-		"lftp",
-		"-u", fmt.Sprintf("%s,%s", request.Username, request.Password),
-		"-e", fmt.Sprintf("mirror '%s' && exit", url.Path),
-		fmt.Sprintf("%s://%s", url.Scheme, url.Host),
-	)
+	lftpCmd := makeLftpCmd(url.Path)
+	var args []string
+
+	if request.Username != "" && request.Password != "" {
+		args = []string{"--user", request.Username, "--password", request.Password, "-e", lftpCmd, url.Host}
+	} else {
+		args = []string{"-e", lftpCmd, url.Host}
+	}
+
+	cmd := exec.Command("lftp", args...)
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	return cmd, nil
+}
+
+func makeLftpCmd(path string) string {
+	if path == "" {
+		return "mirror && exit"
+	}
+
+	escaped := strings.Replace(path, "\"", "\\\"", -1)
+	return fmt.Sprintf("mirror \"%s\" && exit", escaped)
 }
 
 func (handler *Handler) handle(w http.ResponseWriter, r *http.Request) error {
