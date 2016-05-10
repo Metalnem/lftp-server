@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -24,6 +27,14 @@ type Request struct {
 // Handler implements http.Handler interface and logs errors to custom log.Logger.
 type Handler struct {
 	Logger *log.Logger
+	Jobs   chan *Job
+}
+
+// Job is single download request with associated ID.
+type Job struct {
+	ID      string
+	Request *Request
+	*exec.Cmd
 }
 
 func (request *Request) makeCmd() (*exec.Cmd, error) {
@@ -54,6 +65,16 @@ func (request *Request) makeCmd() (*exec.Cmd, error) {
 	return cmd, nil
 }
 
+func generateID() string {
+	b := make([]byte, 256)
+
+	if _, err := rand.Read(b); err != nil {
+		panic("Random number generator failed")
+	}
+
+	return base64.StdEncoding.EncodeToString(b)
+}
+
 func makeLftpCmd(path string) string {
 	if path == "" {
 		return "mirror && exit"
@@ -63,26 +84,45 @@ func makeLftpCmd(path string) string {
 	return fmt.Sprintf("mirror \"%s\" && exit", escaped)
 }
 
-func (handler *Handler) handle(w http.ResponseWriter, r *http.Request) error {
+func decodeRequest(r io.Reader) (*Request, error) {
 	var request Request
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(r)
 
 	if err := decoder.Decode(&request); err != nil {
-		return fmt.Errorf("Invalid request received: %v", err)
+		return nil, fmt.Errorf("Invalid request received: %v", err)
+	}
+
+	return &request, nil
+}
+
+func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	request, err := decodeRequest(r.Body)
+
+	if err != nil {
+		handler.Logger.Println(err)
+		return
 	}
 
 	cmd, err := request.makeCmd()
 
 	if err != nil {
-		return err
+		handler.Logger.Println(err)
+		return
 	}
 
-	return cmd.Run()
+	id := generateID()
+	job := Job{ID: id, Cmd: cmd}
+
+	go func() {
+		handler.Jobs <- &job
+	}()
 }
 
-func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if err := handler.handle(w, r); err != nil {
-		handler.Logger.Println(err)
+func (handler *Handler) worker() {
+	for job := range handler.Jobs {
+		if err := job.Run(); err != nil {
+			handler.Logger.Println(err)
+		}
 	}
 }
 
@@ -121,6 +161,12 @@ func main() {
 		}
 	}()
 
-	http.Handle("/jsonrpc", &Handler{Logger: logger})
+	handler := &Handler{
+		Logger: logger,
+		Jobs:   make(chan *Job, 10),
+	}
+
+	http.Handle("/jsonrpc", handler)
+	go handler.worker()
 	log.Fatal(http.ListenAndServe(":7800", nil))
 }
