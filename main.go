@@ -80,8 +80,14 @@ func makeLftpCmd(path string) string {
 		return "mirror && exit"
 	}
 
+	lftpCmd := "pget"
+
+	if strings.HasSuffix(path, "/") {
+		lftpCmd = "mirror"
+	}
+
 	escaped := strings.Replace(path, "\"", "\\\"", -1)
-	return fmt.Sprintf("mirror \"%s\" && exit", escaped)
+	return fmt.Sprintf("%s \"%s\" && exit", lftpCmd, escaped)
 }
 
 func decodeRequest(r io.Reader) (*Request, error) {
