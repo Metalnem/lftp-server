@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -14,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // Request represents single request for mirroring one FTP directory or a file.
@@ -137,35 +135,7 @@ func main() {
 		log.Fatal("LFTP not found")
 	}
 
-	request := Request{
-		Path:     "ftp://example.org/path",
-		Username: "user",
-		Password: "pass",
-	}
-
 	logger := log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
-	buffer := new(bytes.Buffer)
-	encoder := json.NewEncoder(buffer)
-
-	if err := encoder.Encode(request); err != nil {
-		log.Fatal(err)
-	}
-
-	go func() {
-		time.Sleep(time.Second)
-		resp, err := http.Post("http://localhost:7800/jsonrpc", "application/json", buffer)
-
-		if err != nil {
-			logger.Println(err)
-			return
-		}
-
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			logger.Println(resp.Status)
-		}
-	}()
 
 	handler := &Handler{
 		Logger: logger,
