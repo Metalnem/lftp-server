@@ -57,6 +57,10 @@ func (request *Request) makeCmd() (*exec.Cmd, error) {
 		return nil, fmt.Errorf("Invalid URL: %s", request.Path)
 	}
 
+	if url.Scheme != "ftp" {
+		return nil, fmt.Errorf("Only FTP downloads are supported")
+	}
+
 	lftpCmd := makeLftpCmd(url.Path)
 	var args []string
 
