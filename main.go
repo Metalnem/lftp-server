@@ -15,6 +15,12 @@ import (
 	"strings"
 )
 
+// Info is used for logging information.
+var Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+
+// Error is used for logging errors.
+var Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+
 // Request represents single request for mirroring one FTP directory or a file.
 type Request struct {
 	Path     string `json:"path"`
@@ -22,17 +28,22 @@ type Request struct {
 	Password string `json:"password"`
 }
 
-// Handler implements http.Handler interface and logs errors to custom log.Logger.
-type Handler struct {
-	Logger *log.Logger
-	Jobs   chan *Job
+// Response represents response to a client with ID for a created job or error message in case of error.
+type Response struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
 }
 
-// Job is single download request with associated ID.
+// Handler implements http.Handler interface and processes download requests sequentially.
+type Handler struct {
+	Jobs chan *Job
+}
+
+// Job is single download request with associated ID and LFTP command.
 type Job struct {
 	ID      string
 	Request *Request
-	*exec.Cmd
+	Command *exec.Cmd
 }
 
 func (request *Request) makeCmd() (*exec.Cmd, error) {
@@ -64,7 +75,7 @@ func (request *Request) makeCmd() (*exec.Cmd, error) {
 }
 
 func generateID() string {
-	b := make([]byte, 256)
+	b := make([]byte, 32)
 
 	if _, err := rand.Read(b); err != nil {
 		panic("Random number generator failed")
@@ -100,32 +111,50 @@ func decodeRequest(r io.Reader) (*Request, error) {
 }
 
 func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	id := generateID()
+
+	Info.Printf("Received download request %s from %s\n", id, r.RemoteAddr)
+
 	request, err := decodeRequest(r.Body)
 
 	if err != nil {
-		handler.Logger.Println(err)
+		serveError(w, err)
 		return
 	}
 
 	cmd, err := request.makeCmd()
 
 	if err != nil {
-		handler.Logger.Println(err)
+		serveError(w, err)
 		return
 	}
 
-	id := generateID()
-	job := Job{ID: id, Request: request, Cmd: cmd}
+	job := Job{ID: id, Request: request, Command: cmd}
+
+	Info.Printf("Download request %s has URL %s\n", id, request.Path)
+	json.NewEncoder(w).Encode(Response{ID: id})
 
 	go func() {
 		handler.Jobs <- &job
 	}()
 }
 
+func serveError(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(Response{Message: err.Error()})
+	Error.Println(err)
+}
+
 func (handler *Handler) worker() {
 	for job := range handler.Jobs {
-		if err := job.Run(); err != nil {
-			handler.Logger.Println(err)
+		Info.Printf("Begin LFTP output for request %s", job.ID)
+		err := job.Command.Run()
+		Info.Printf("End LFTP output for request %s", job.ID)
+
+		if err != nil {
+			Error.Printf("Failed to execute request %s with error: %v\n", job.ID, err)
+		} else {
+			Info.Printf("Request %s completed", job.ID)
 		}
 	}
 }
@@ -135,14 +164,13 @@ func main() {
 		log.Fatal("LFTP not found")
 	}
 
-	logger := log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
-
 	handler := &Handler{
-		Logger: logger,
-		Jobs:   make(chan *Job, 10),
+		Jobs: make(chan *Job, 10),
 	}
 
 	http.Handle("/jsonrpc", handler)
 	go handler.worker()
+
+	Info.Println("Starting LFTP server")
 	log.Fatal(http.ListenAndServe(":7800", nil))
 }
