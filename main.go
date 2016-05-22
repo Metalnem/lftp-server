@@ -14,6 +14,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var rpcListenPort = flag.Int("rpc-listen-port", 7800, "Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535")
@@ -30,6 +32,7 @@ type Request struct {
 	Path     string `json:"path"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Secret   string `json:"secret"`
 }
 
 // Response represents response to a client with ID for a created job or error message in case of error.
@@ -40,7 +43,8 @@ type Response struct {
 
 // Handler implements http.Handler interface and processes download requests sequentially.
 type Handler struct {
-	Jobs chan *Job
+	Jobs      chan *Job
+	TokenHash []byte
 }
 
 // Job is single download request with associated ID and LFTP command.
@@ -126,14 +130,19 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request, err := decodeRequest(r.Body)
 
 	if err != nil {
-		serveError(w, err)
+		serveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err = bcrypt.CompareHashAndPassword(handler.TokenHash, []byte(request.Secret)); err != nil {
+		serveError(w, http.StatusUnauthorized, "Secret token does not match")
 		return
 	}
 
 	cmd, err := request.makeCmd()
 
 	if err != nil {
-		serveError(w, err)
+		serveError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -147,9 +156,9 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-func serveError(w http.ResponseWriter, err error) {
-	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(Response{Message: err.Error()})
+func serveError(w http.ResponseWriter, status int, err string) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(Response{Message: err})
 	Error.Println(err)
 }
 
@@ -175,17 +184,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	tokenHash, err := bcrypt.GenerateFromPassword([]byte(*rpcSecret), bcrypt.DefaultCost)
+
+	if err != nil {
+		log.Fatal("bcrypt failed to generate token hash")
+	}
+
 	if _, err := exec.LookPath("lftp"); err != nil {
 		log.Fatal("LFTP not found")
 	}
 
 	handler := &Handler{
-		Jobs: make(chan *Job, 10),
+		Jobs:      make(chan *Job, 10),
+		TokenHash: tokenHash,
 	}
 
 	http.Handle("/jsonrpc", handler)
 	go handler.worker()
 
-	Info.Println("Starting LFTP server")
+	Info.Printf("Starting LFTP server on port %d\n", *rpcListenPort)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *rpcListenPort), nil))
 }
