@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,9 @@ import (
 	"os/exec"
 	"strings"
 )
+
+var rpcListenPort = flag.Int("rpc-listen-port", 7800, "Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535")
+var rpcSecret = flag.String("rpc-secret", "", "Set RPC secret authorization token (required)")
 
 // Info is used for logging information.
 var Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
@@ -164,6 +168,13 @@ func (handler *Handler) worker() {
 }
 
 func main() {
+	flag.Parse()
+
+	if (*rpcListenPort < 1024 || *rpcListenPort > 65535) || *rpcSecret == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	if _, err := exec.LookPath("lftp"); err != nil {
 		log.Fatal("LFTP not found")
 	}
@@ -176,5 +187,5 @@ func main() {
 	go handler.worker()
 
 	Info.Println("Starting LFTP server")
-	log.Fatal(http.ListenAndServe(":7800", nil))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *rpcListenPort), nil))
 }
