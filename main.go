@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/jlaffaye/ftp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -54,7 +56,7 @@ type Job struct {
 	Command *exec.Cmd
 }
 
-func (request *Request) makeCmd() (*exec.Cmd, error) {
+func (request *Request) extractURL() (*url.URL, error) {
 	if request.Path == "" {
 		return nil, errors.New("No URL specified in a request")
 	}
@@ -69,6 +71,10 @@ func (request *Request) makeCmd() (*exec.Cmd, error) {
 		return nil, fmt.Errorf("Only FTP downloads are supported")
 	}
 
+	return url, nil
+}
+
+func (request *Request) makeCmd(url *url.URL) (*exec.Cmd, error) {
 	lftpCmd := makeLftpCmd(url.Path)
 	var args []string
 
@@ -135,17 +141,43 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = bcrypt.CompareHashAndPassword(handler.TokenHash, []byte(request.Secret)); err != nil {
-		serveError(w, http.StatusUnauthorized, "Secret token does not match")
+		serveError(w, http.StatusBadRequest, "Secret token does not match")
 		return
 	}
 
-	cmd, err := request.makeCmd()
+	url, err := request.extractURL()
 
 	if err != nil {
 		serveError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	cmd, err := request.makeCmd(url)
+
+	if err != nil {
+		serveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	conn, err := ftp.DialTimeout(fmt.Sprintf("%s:21", url.Host), 5*time.Second)
+
+	if err != nil {
+		serveError(w, http.StatusBadRequest, fmt.Sprintf("Unable to connect to FTP server at %s", url.Host))
+		return
+	}
+
+	if request.Username != "" && request.Password != "" {
+		err = conn.Login(request.Username, request.Password)
+	} else {
+		err = conn.Login("anonymous", "anonymous")
+	}
+
+	if err != nil {
+		serveError(w, http.StatusUnauthorized, "Missing or invalid credentials")
+		return
+	}
+
+	conn.Logout()
 	job := Job{ID: id, Request: request, Command: cmd}
 
 	Info.Printf("Download request %s has URL %s\n", id, request.Path)
