@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,14 +19,22 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var rpcListenPort = flag.Int("rpc-listen-port", 7800, "Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535")
-var rpcSecret = flag.String("rpc-secret", "", "Set RPC secret authorization token (required)")
+var (
+	rpcListenPort = flag.Int("rpc-listen-port", 7800, "Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535")
+	rpcSecret     = flag.String("rpc-secret", "", "Set RPC secret authorization token (required)")
 
-// Info is used for logging information.
-var Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	// Info is used for logging information.
+	Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 
-// Error is used for logging errors.
-var Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+	// Error is used for logging errors.
+	Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+
+	errMissingURL           = errors.New("No URL specified in a request")
+	errProtocolMismatch     = errors.New("Only FTP downloads are supported")
+	errInvalidRequestFormat = errors.New("Invalid request format")
+	errTokenMismatch        = errors.New("Secret token does not match")
+	errUnauthorized         = errors.New("Missing or invalid credentials")
+)
 
 // Request represents single request for mirroring one FTP directory or a file.
 type Request struct {
@@ -45,20 +52,19 @@ type Response struct {
 
 // Handler implements http.Handler interface and processes download requests sequentially.
 type Handler struct {
-	Jobs      chan *Job
-	TokenHash []byte
+	Jobs        chan *Job
+	HashedToken []byte
 }
 
 // Job is single download request with associated ID and LFTP command.
 type Job struct {
 	ID      string
-	Request *Request
 	Command *exec.Cmd
 }
 
 func (request *Request) extractURL() (*url.URL, error) {
 	if request.Path == "" {
-		return nil, errors.New("No URL specified in a request")
+		return nil, errMissingURL
 	}
 
 	url, err := url.Parse(request.Path)
@@ -68,38 +74,10 @@ func (request *Request) extractURL() (*url.URL, error) {
 	}
 
 	if url.Scheme != "ftp" {
-		return nil, fmt.Errorf("Only FTP downloads are supported")
+		return nil, errProtocolMismatch
 	}
 
 	return url, nil
-}
-
-func (request *Request) makeCmd(url *url.URL) (*exec.Cmd, error) {
-	lftpCmd := makeLftpCmd(url.Path)
-	var args []string
-
-	if request.Username != "" && request.Password != "" {
-		args = []string{"--user", request.Username, "--password", request.Password, "-e", lftpCmd, url.Host}
-	} else {
-		args = []string{"-e", lftpCmd, url.Host}
-	}
-
-	cmd := exec.Command("lftp", args...)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd, nil
-}
-
-func generateID() string {
-	b := make([]byte, 32)
-
-	if _, err := rand.Read(b); err != nil {
-		panic("Random number generator failed")
-	}
-
-	return base64.StdEncoding.EncodeToString(b)
 }
 
 func makeLftpCmd(path string) string {
@@ -117,53 +95,57 @@ func makeLftpCmd(path string) string {
 	return fmt.Sprintf("%s \"%s\" && exit", lftpCmd, escaped)
 }
 
-func decodeRequest(r io.Reader) (*Request, error) {
-	var request Request
-	decoder := json.NewDecoder(r)
+func makeCmd(url *url.URL, username, password string) *exec.Cmd {
+	lftpCmd := makeLftpCmd(url.Path)
+	var args []string
 
-	if err := decoder.Decode(&request); err != nil {
-		return nil, fmt.Errorf("Invalid request received: %v", err)
+	if username != "" && password != "" {
+		args = []string{"--user", username, "--password", password, "-e", lftpCmd, url.Host}
+	} else {
+		args = []string{"-e", lftpCmd, url.Host}
 	}
 
-	return &request, nil
+	cmd := exec.Command("lftp", args...)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd
 }
 
-func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := generateID()
+func generateID() string {
+	b := make([]byte, 32)
 
-	Info.Printf("Received download request %s from %s\n", id, r.RemoteAddr)
-
-	request, err := decodeRequest(r.Body)
-
-	if err != nil {
-		serveError(w, http.StatusBadRequest, err.Error())
-		return
+	if _, err := rand.Read(b); err != nil {
+		panic("Random number generator failed")
 	}
 
-	if err = bcrypt.CompareHashAndPassword(handler.TokenHash, []byte(request.Secret)); err != nil {
-		serveError(w, http.StatusBadRequest, "Secret token does not match")
-		return
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func (handler *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, id string) error {
+	var request Request
+	decoder := json.NewDecoder(r.Body)
+
+	if err := decoder.Decode(&request); err != nil {
+		return errInvalidRequestFormat
 	}
 
+	if err := bcrypt.CompareHashAndPassword(handler.HashedToken, []byte(request.Secret)); err != nil {
+		return errTokenMismatch
+	}
+
+	Info.Printf("Download request %s has URL %s\n", id, request.Path)
 	url, err := request.extractURL()
 
 	if err != nil {
-		serveError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cmd, err := request.makeCmd(url)
-
-	if err != nil {
-		serveError(w, http.StatusBadRequest, err.Error())
-		return
+		return err
 	}
 
 	conn, err := ftp.DialTimeout(fmt.Sprintf("%s:21", url.Host), 5*time.Second)
 
 	if err != nil {
-		serveError(w, http.StatusBadRequest, fmt.Sprintf("Unable to connect to FTP server at %s", url.Host))
-		return
+		return fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
 	}
 
 	if request.Username != "" && request.Password != "" {
@@ -173,25 +155,37 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		serveError(w, http.StatusUnauthorized, "Missing or invalid credentials")
-		return
+		return errUnauthorized
 	}
 
 	conn.Logout()
-	job := Job{ID: id, Request: request, Command: cmd}
-
-	Info.Printf("Download request %s has URL %s\n", id, request.Path)
 	json.NewEncoder(w).Encode(Response{ID: id})
+
+	cmd := makeCmd(url, request.Username, request.Password)
+	job := Job{ID: id, Command: cmd}
 
 	go func() {
 		handler.Jobs <- &job
 	}()
+
+	return nil
 }
 
-func serveError(w http.ResponseWriter, status int, err string) {
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(Response{Message: err})
-	Error.Println(err)
+func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	id := generateID()
+	Info.Printf("Received download request %s from %s\n", id, r.RemoteAddr)
+
+	if err := handler.serveHTTP(w, r, id); err != nil {
+		Error.Printf("Invalid request %s: %s\n", id, err)
+		status := http.StatusBadRequest
+
+		if err == errUnauthorized {
+			status = http.StatusUnauthorized
+		}
+
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(Response{Message: err.Error()})
+	}
 }
 
 func (handler *Handler) worker() {
@@ -216,10 +210,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	tokenHash, err := bcrypt.GenerateFromPassword([]byte(*rpcSecret), bcrypt.DefaultCost)
+	hashedToken, err := bcrypt.GenerateFromPassword([]byte(*rpcSecret), bcrypt.DefaultCost)
 
 	if err != nil {
-		log.Fatal("bcrypt failed to generate token hash")
+		log.Fatal("bcrypt failed to generate hashed token")
 	}
 
 	if _, err := exec.LookPath("lftp"); err != nil {
@@ -227,8 +221,8 @@ func main() {
 	}
 
 	handler := &Handler{
-		Jobs:      make(chan *Job, 10),
-		TokenHash: tokenHash,
+		Jobs:        make(chan *Job, 10),
+		HashedToken: hashedToken,
 	}
 
 	http.Handle("/jsonrpc", handler)
