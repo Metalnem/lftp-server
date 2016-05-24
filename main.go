@@ -8,10 +8,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,7 +144,13 @@ func (handler *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, id str
 		return err
 	}
 
-	conn, err := ftp.DialTimeout(fmt.Sprintf("%s:21", url.Host), 5*time.Second)
+	host, port, err := net.SplitHostPort(url.Host)
+
+	if err != nil {
+		host, port = url.Host, strconv.Itoa(21)
+	}
+
+	conn, err := ftp.DialTimeout(net.JoinHostPort(host, port), 5*time.Second)
 
 	if err != nil {
 		return fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
