@@ -125,23 +125,26 @@ func generateID() string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-func (handler *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, id string) error {
+func (handler *Handler) processRequest(r *http.Request) (string, error) {
+	id := generateID()
+	Info.Printf("Received download request %s from %s\n", id, r.RemoteAddr)
+
 	var request Request
 	decoder := json.NewDecoder(r.Body)
 
 	if err := decoder.Decode(&request); err != nil {
-		return errInvalidRequestFormat
+		return "", errInvalidRequestFormat
 	}
 
 	if err := bcrypt.CompareHashAndPassword(handler.HashedToken, []byte(request.Secret)); err != nil {
-		return errTokenMismatch
+		return "", errTokenMismatch
 	}
 
 	Info.Printf("Download request %s has URL %s\n", id, request.Path)
 	url, err := request.extractURL()
 
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	host, port, err := net.SplitHostPort(url.Host)
@@ -153,7 +156,7 @@ func (handler *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, id str
 	conn, err := ftp.DialTimeout(net.JoinHostPort(host, port), 5*time.Second)
 
 	if err != nil {
-		return fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
+		return "", fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
 	}
 
 	if request.Username != "" && request.Password != "" {
@@ -163,11 +166,10 @@ func (handler *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, id str
 	}
 
 	if err != nil {
-		return errUnauthorized
+		return "", errUnauthorized
 	}
 
 	conn.Logout()
-	json.NewEncoder(w).Encode(Response{ID: id})
 
 	cmd := makeCmd(url, request.Username, request.Password)
 	job := Job{ID: id, Command: cmd}
@@ -176,24 +178,26 @@ func (handler *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, id str
 		handler.Jobs <- &job
 	}()
 
-	return nil
+	return id, nil
 }
 
 func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	id := generateID()
-	Info.Printf("Received download request %s from %s\n", id, r.RemoteAddr)
+	id, err := handler.processRequest(r)
 
-	if err := handler.serveHTTP(w, r, id); err != nil {
-		Error.Printf("Invalid request %s: %s\n", id, err)
-		status := http.StatusBadRequest
-
-		if err == errUnauthorized {
-			status = http.StatusUnauthorized
-		}
-
-		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(Response{Message: err.Error()})
+	if err == nil {
+		json.NewEncoder(w).Encode(Response{ID: id})
+		return
 	}
+
+	Error.Printf("Invalid request %s: %s\n", id, err)
+	status := http.StatusBadRequest
+
+	if err == errUnauthorized {
+		status = http.StatusUnauthorized
+	}
+
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(Response{Message: err.Error()})
 }
 
 func (handler *Handler) worker() {
