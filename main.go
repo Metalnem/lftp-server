@@ -25,6 +25,9 @@ var (
 	rpcListenPort = flag.Int("rpc-listen-port", 7800, "Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535")
 	rpcSecret     = flag.String("rpc-secret", "", "Set RPC secret authorization token (required)")
 
+	n = flag.Int("n", 4, "Number of connections to use when downloading single file. Possible values: 1-100")
+	p = flag.Int("p", 1, "Number of files to download in parallel when mirroring directories. Possible values: 1-10")
+
 	// Info is used for logging information.
 	Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 
@@ -218,6 +221,11 @@ func main() {
 	flag.Parse()
 
 	if (*rpcListenPort < 1024 || *rpcListenPort > 65535) || *rpcSecret == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if *n < 1 || *n > 100 || *p < 1 || *p > 10 {
 		flag.Usage()
 		os.Exit(1)
 	}
