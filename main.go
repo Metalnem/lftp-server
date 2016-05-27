@@ -86,18 +86,17 @@ func (request *Request) extractURL() (*url.URL, error) {
 }
 
 func makeLftpCmd(path string) string {
-	if path == "" {
-		return "mirror && exit"
-	}
+	escaped := "/"
 
-	lftpCmd := "pget"
+	if path != "" {
+		escaped = strings.Replace(path, "\"", "\\\"", -1)
+	}
 
 	if strings.HasSuffix(path, "/") {
-		lftpCmd = "mirror"
+		return fmt.Sprintf("mirror --parallel=%d --use-pget-n=%d \"%s\" && exit", *p, *n, escaped)
 	}
 
-	escaped := strings.Replace(path, "\"", "\\\"", -1)
-	return fmt.Sprintf("%s \"%s\" && exit", lftpCmd, escaped)
+	return fmt.Sprintf("pget -n %d \"%s\" && exit", *n, escaped)
 }
 
 func makeCmd(url *url.URL, username, password string) *exec.Cmd {
