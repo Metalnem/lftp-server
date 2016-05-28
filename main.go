@@ -234,8 +234,14 @@ func getOutputDir(dir string) (string, error) {
 		return "", err
 	}
 
-	if _, err := os.Stat(abs); err != nil {
+	file, err := os.Stat(abs)
+
+	if err != nil {
 		return "", err
+	}
+
+	if !file.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", abs)
 	}
 
 	return abs, nil
