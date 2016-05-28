@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ var (
 	rpcSecret     = flag.String("rpc-secret", "", "Set RPC secret authorization token (required)")
 
 	n = flag.Int("n", 4, "Number of connections to use when downloading single file. Possible values: 1-100")
+	o = flag.String("o", "", "Output directory (optional, default value is the current working directory)")
 	p = flag.Int("p", 1, "Number of files to download in parallel when mirroring directories. Possible values: 1-10")
 
 	// Info is used for logging information.
@@ -216,6 +218,28 @@ func (handler *Handler) worker() {
 	}
 }
 
+func getOutputDir(dir string) (string, error) {
+	var err error
+
+	if dir == "" {
+		if dir, err = os.Getwd(); err != nil {
+			return "", err
+		}
+	}
+
+	abs, err := filepath.Abs(dir)
+
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := os.Stat(abs); err != nil {
+		return "", err
+	}
+
+	return abs, nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -227,6 +251,12 @@ func main() {
 	if *n < 1 || *n > 100 || *p < 1 || *p > 10 {
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	if dir, err := getOutputDir(*o); err != nil {
+		log.Fatal(err)
+	} else {
+		*o = dir
 	}
 
 	hashedToken, err := bcrypt.GenerateFromPassword([]byte(*rpcSecret), bcrypt.DefaultCost)
@@ -248,5 +278,6 @@ func main() {
 	go handler.worker()
 
 	Info.Printf("Starting LFTP server on port %d\n", *rpcListenPort)
+	Info.Printf("Output directory is %s\n", *o)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *rpcListenPort), nil))
 }
