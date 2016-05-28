@@ -113,6 +113,7 @@ func makeCmd(url *url.URL, username, password string) *exec.Cmd {
 
 	cmd := exec.Command("lftp", args...)
 
+	cmd.Dir = *o
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
