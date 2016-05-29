@@ -194,7 +194,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	Error.Printf("Invalid request %s: %s\n", id, err)
+	Error.Printf("Invalid request received: %s\n", err)
 	status := http.StatusBadRequest
 
 	if err == errUnauthorized {
