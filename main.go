@@ -29,6 +29,7 @@ var (
 	n = flag.Int("n", 4, "Number of connections to use when downloading single file. Possible values: 1-100")
 	o = flag.String("o", "", "Output directory (optional, default value is the current working directory)")
 	p = flag.Int("p", 1, "Number of files to download in parallel when mirroring directories. Possible values: 1-10")
+	s = flag.String("s", "", "Script to run after successful download")
 
 	// Info is used for logging information.
 	Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
@@ -66,10 +67,11 @@ type Handler struct {
 // JobID is unique identifier of a job.
 type JobID [32]byte
 
-// Job is single download request with associated ID and LFTP command.
+// Job is single download request with associated LFTP command and script that will run after download is completed.
 type Job struct {
-	ID      *JobID
-	Command *exec.Cmd
+	ID        *JobID
+	Command   *exec.Cmd
+	ScriptCmd *exec.Cmd
 }
 
 func (request *Request) extractURL() (*url.URL, error) {
@@ -121,6 +123,23 @@ func makeCmd(url *url.URL, username, password string) *exec.Cmd {
 	cmd.Stderr = os.Stderr
 
 	return cmd
+}
+
+func makeScriptCmd(path string) (*exec.Cmd, error) {
+	scriptPath, err := filepath.Abs(*s)
+
+	if err != nil {
+		return nil, err
+	}
+
+	outputPath := filepath.Join(*o, filepath.Base(path))
+	cmd := exec.Command(scriptPath, outputPath)
+
+	cmd.Dir = *o
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd, nil
 }
 
 func newID() *JobID {
@@ -188,7 +207,13 @@ func (handler *Handler) processRequest(r *http.Request) (*JobID, error) {
 	conn.Logout()
 
 	cmd := makeCmd(url, request.Username, request.Password)
-	job := Job{ID: id, Command: cmd}
+	scriptCmd, err := makeScriptCmd(url.Path)
+
+	if err != nil {
+		Error.Printf("Error creating script command for request %s: %s", id, err.Error())
+	}
+
+	job := Job{ID: id, Command: cmd, ScriptCmd: scriptCmd}
 
 	go func() {
 		handler.Jobs <- &job
@@ -226,6 +251,18 @@ func (handler *Handler) worker() {
 			Error.Printf("Failed to execute request %s with error: %v\n", job.ID, err)
 		} else {
 			Info.Printf("Request %s completed", job.ID)
+		}
+
+		if err == nil && job.ScriptCmd != nil {
+			Info.Printf("Begin script output for request %s", job.ID)
+			err = job.ScriptCmd.Run()
+			Info.Printf("End script output for request %s", job.ID)
+
+			if err != nil {
+				Error.Printf("Failed to execute script for request %s with error: %v\n", job.ID, err)
+			} else {
+				Info.Printf("Script for request %s completed", job.ID)
+			}
 		}
 	}
 }
