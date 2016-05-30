@@ -60,10 +60,12 @@ Usage of ./lftp-server:
 	  Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535 (default 7800)
   -rpc-secret string
 	  Set RPC secret authorization token (required)
+  -s string
+	  Script to run after successful download
 ```
 
 ## Example
 
 ```
-$ ./lftp-server -rpc-listen-port 7800 -rpc-secret SECRET -n 4 -p 1 -o ~/Downloads
+$ ./lftp-server -rpc-listen-port 7800 -rpc-secret SECRET -n 4 -p 1 -o ~/Downloads -s ./script.sh
 ```
