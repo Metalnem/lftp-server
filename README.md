@@ -42,8 +42,8 @@ $ go get github.com/metalnem/lftp-server
 
 ## Binaries (x64)
 
-[Linux](https://github.com/Metalnem/lftp-server/releases/download/v1.0.0/lftp-server-linux64-1.0.0.zip)  
-[Mac OS X](https://github.com/Metalnem/lftp-server/releases/download/v1.0.0/lftp-server-darwin64-1.0.0.zip)
+[Linux](https://github.com/Metalnem/lftp-server/releases/download/v1.1.0z/lftp-server-linux64-1.1.0.zip)  
+[Mac OS X](https://github.com/Metalnem/lftp-server/releases/download/v1.1.0z/lftp-server-darwin64-1.1.0.zip)
 
 ## Usage
 
