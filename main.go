@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/rand"
-	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -63,9 +63,12 @@ type Handler struct {
 	HashedToken []byte
 }
 
+// JobID is unique identifier of a job.
+type JobID [32]byte
+
 // Job is single download request with associated ID and LFTP command.
 type Job struct {
-	ID      string
+	ID      *JobID
 	Command *exec.Cmd
 }
 
@@ -120,36 +123,44 @@ func makeCmd(url *url.URL, username, password string) *exec.Cmd {
 	return cmd
 }
 
-func generateID() string {
-	b := make([]byte, 32)
+func newID() *JobID {
+	var id JobID
 
-	if _, err := rand.Read(b); err != nil {
+	if _, err := rand.Read(id[:]); err != nil {
 		panic("Random number generator failed")
 	}
 
-	return base64.StdEncoding.EncodeToString(b)
+	return &id
 }
 
-func (handler *Handler) processRequest(r *http.Request) (string, error) {
-	id := generateID()
+func (id *JobID) serialize() string {
+	return hex.EncodeToString(id[:])
+}
+
+func (id *JobID) String() string {
+	return hex.EncodeToString(id[:6])
+}
+
+func (handler *Handler) processRequest(r *http.Request) (*JobID, error) {
+	id := newID()
 	Info.Printf("Received download request %s from %s\n", id, r.RemoteAddr)
 
 	var request Request
 	decoder := json.NewDecoder(r.Body)
 
 	if err := decoder.Decode(&request); err != nil {
-		return "", errInvalidRequestFormat
+		return nil, errInvalidRequestFormat
 	}
 
 	if err := bcrypt.CompareHashAndPassword(handler.HashedToken, []byte(request.Secret)); err != nil {
-		return "", errTokenMismatch
+		return nil, errTokenMismatch
 	}
 
 	Info.Printf("Download request %s has URL %s\n", id, request.Path)
 	url, err := request.extractURL()
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	host, port, err := net.SplitHostPort(url.Host)
@@ -161,7 +172,7 @@ func (handler *Handler) processRequest(r *http.Request) (string, error) {
 	conn, err := ftp.DialTimeout(net.JoinHostPort(host, port), 5*time.Second)
 
 	if err != nil {
-		return "", fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
+		return nil, fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
 	}
 
 	if request.Username != "" && request.Password != "" {
@@ -171,7 +182,7 @@ func (handler *Handler) processRequest(r *http.Request) (string, error) {
 	}
 
 	if err != nil {
-		return "", errUnauthorized
+		return nil, errUnauthorized
 	}
 
 	conn.Logout()
@@ -190,7 +201,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id, err := handler.processRequest(r)
 
 	if err == nil {
-		json.NewEncoder(w).Encode(Response{ID: id})
+		json.NewEncoder(w).Encode(Response{ID: id.serialize()})
 		return
 	}
 
