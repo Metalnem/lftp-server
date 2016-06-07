@@ -40,7 +40,7 @@ var (
 	Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
 
 	errMissingURL           = errors.New("No URL specified in a request")
-	errProtocolMismatch     = errors.New("Only FTP downloads are supported")
+	errProtocolMismatch     = errors.New("Only HTTP/FTP downloads are supported")
 	errInvalidRequestFormat = errors.New("Invalid request format")
 	errTokenMismatch        = errors.New("Secret token does not match")
 	errUnauthorized         = errors.New("Missing or invalid credentials")
@@ -142,8 +142,7 @@ func makeScriptCmd(path string) (*exec.Cmd, error) {
 
 func connect(url *url.URL, username, password string) error {
 	switch url.Scheme {
-	case "http":
-	case "https":
+	case "http", "https":
 		return connectHTTP(url, username, password)
 	case "ftp":
 		return connectFTP(url, username, password)
@@ -153,7 +152,7 @@ func connect(url *url.URL, username, password string) error {
 }
 
 func connectHTTP(url *url.URL, username, password string) error {
-	req, err := http.NewRequest(http.MethodGet, url.Host, nil)
+	req, err := http.NewRequest(http.MethodGet, url.String(), nil)
 
 	if err != nil {
 		return fmt.Errorf("Unable to connect to %s", url.Host)
