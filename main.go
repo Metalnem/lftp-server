@@ -31,6 +31,8 @@ var (
 	p = flag.Int("p", 1, "Number of files to download in parallel when mirroring directories. Possible values: 1-10")
 	s = flag.String("s", "", "Script to run after successful download")
 
+	connectTimeout = 5 * time.Second
+
 	// Info is used for logging information.
 	Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
 
@@ -81,25 +83,21 @@ func (request *Request) extractURL() (*url.URL, error) {
 
 	url, err := url.Parse(request.Path)
 
-	if err != nil {
+	if err != nil || url.Host == "" {
 		return nil, fmt.Errorf("Invalid URL: %s", request.Path)
-	}
-
-	if url.Scheme != "ftp" {
-		return nil, errProtocolMismatch
 	}
 
 	return url, nil
 }
 
-func makeLftpCmd(path string) string {
+func makeLftpCmd(url *url.URL) string {
 	escaped := "/"
 
-	if path != "" {
-		escaped = strings.Replace(path, "\"", "\\\"", -1)
+	if url.Path != "" {
+		escaped = strings.Replace(url.Path, "\"", "\\\"", -1)
 	}
 
-	if strings.HasSuffix(path, "/") {
+	if url.Scheme == "ftp" && strings.HasSuffix(url.Path, "/") {
 		return fmt.Sprintf("mirror --parallel=%d --use-pget-n=%d \"%s\" && exit", *p, *n, escaped)
 	}
 
@@ -107,7 +105,7 @@ func makeLftpCmd(path string) string {
 }
 
 func makeCmd(url *url.URL, username, password string) *exec.Cmd {
-	lftpCmd := makeLftpCmd(url.Path)
+	lftpCmd := makeLftpCmd(url)
 	var args []string
 
 	if username != "" && password != "" {
@@ -140,6 +138,70 @@ func makeScriptCmd(path string) (*exec.Cmd, error) {
 	cmd.Stderr = os.Stderr
 
 	return cmd, nil
+}
+
+func connect(url *url.URL, username, password string) error {
+	switch url.Scheme {
+	case "http":
+	case "https":
+		return connectHTTP(url, username, password)
+	case "ftp":
+		return connectFTP(url, username, password)
+	}
+
+	return errProtocolMismatch
+}
+
+func connectHTTP(url *url.URL, username, password string) error {
+	req, err := http.NewRequest(http.MethodGet, url.Host, nil)
+
+	if err != nil {
+		return fmt.Errorf("Unable to connect to %s", url.Host)
+	}
+
+	req.SetBasicAuth(username, password)
+
+	client := &http.Client{Timeout: connectTimeout}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return fmt.Errorf("Unable to connect to %s", url.Host)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return errUnauthorized
+	}
+
+	return nil
+}
+
+func connectFTP(url *url.URL, username, password string) error {
+	host, port, err := net.SplitHostPort(url.Host)
+
+	if err != nil {
+		host, port = url.Host, strconv.Itoa(21)
+	}
+
+	conn, err := ftp.DialTimeout(net.JoinHostPort(host, port), connectTimeout)
+
+	if err != nil {
+		return fmt.Errorf("Unable to connect to %s", url.Host)
+	}
+
+	if username != "" && password != "" {
+		err = conn.Login(username, password)
+	} else {
+		err = conn.Login("anonymous", "anonymous")
+	}
+
+	if err != nil {
+		return errUnauthorized
+	}
+
+	conn.Logout()
+	return nil
 }
 
 func newID() *JobID {
@@ -182,29 +244,9 @@ func (handler *Handler) processRequest(r *http.Request) (*JobID, error) {
 		return nil, err
 	}
 
-	host, port, err := net.SplitHostPort(url.Host)
-
-	if err != nil {
-		host, port = url.Host, strconv.Itoa(21)
+	if err = connect(url, request.Username, request.Password); err != nil {
+		return nil, err
 	}
-
-	conn, err := ftp.DialTimeout(net.JoinHostPort(host, port), 5*time.Second)
-
-	if err != nil {
-		return nil, fmt.Errorf("Unable to connect to FTP server at %s", url.Host)
-	}
-
-	if request.Username != "" && request.Password != "" {
-		err = conn.Login(request.Username, request.Password)
-	} else {
-		err = conn.Login("anonymous", "anonymous")
-	}
-
-	if err != nil {
-		return nil, errUnauthorized
-	}
-
-	conn.Logout()
 
 	cmd := makeCmd(url, request.Username, request.Password)
 	scriptCmd, err := makeScriptCmd(url.Path)
