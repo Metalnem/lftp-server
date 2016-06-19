@@ -25,6 +25,7 @@ import (
 var (
 	rpcListenPort = flag.Int("rpc-listen-port", 7800, "Specify a port number for JSON-RPC server to listen to. Possible values: 1024-65535")
 	rpcSecret     = flag.String("rpc-secret", "", "Set RPC secret authorization token (required)")
+	maxRetries    = flag.Int("max-retries", 5, "The maximum number of sequential tries of an operation without success. Possible values: 1-100")
 
 	n = flag.Int("n", 4, "Number of connections to use when downloading single file. Possible values: 1-100")
 	o = flag.String("o", "", "Output directory (optional, default value is the current working directory)")
@@ -97,11 +98,16 @@ func makeLftpCmd(url *url.URL) string {
 		escaped = strings.Replace(url.Path, "\"", "\\\"", -1)
 	}
 
+	var cmd string
+
 	if url.Scheme == "ftp" && strings.HasSuffix(url.Path, "/") {
-		return fmt.Sprintf("mirror --parallel=%d --use-pget-n=%d \"%s\" && exit", *p, *n, escaped)
+		cmd = fmt.Sprintf("mirror --parallel=%d --use-pget-n=%d \"%s\" && exit", *p, *n, escaped)
+	} else {
+		cmd = fmt.Sprintf("pget -n %d \"%s\" && exit", *n, escaped)
 	}
 
-	return fmt.Sprintf("pget -n %d \"%s\" && exit", *n, escaped)
+	commands := []string{"set cmd:trace true", fmt.Sprintf("set net:max-retries %d", *maxRetries), cmd, "exit"}
+	return strings.Join(commands, "; ")
 }
 
 func makeCmd(url *url.URL, username, password string) *exec.Cmd {
@@ -344,7 +350,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *n < 1 || *n > 100 || *p < 1 || *p > 10 {
+	if *maxRetries < 1 || *maxRetries > 100 || *n < 1 || *n > 100 || *p < 1 || *p > 10 {
 		flag.Usage()
 		os.Exit(1)
 	}

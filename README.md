@@ -50,6 +50,8 @@ $ go get github.com/metalnem/lftp-server
 ```
 $ ./lftp-server
 Usage of ./lftp-server:
+  -max-retries int
+	  The maximum number of sequential tries of an operation without success. Possible values: 1-100 (default 5)
   -n int
 	  Number of connections to use when downloading single file. Possible values: 1-100 (default 4)
   -o string
@@ -67,5 +69,5 @@ Usage of ./lftp-server:
 ## Example
 
 ```
-$ ./lftp-server -rpc-listen-port 7800 -rpc-secret SECRET -n 4 -p 1 -o ~/Downloads -s ./script.sh
+$ ./lftp-server -rpc-listen-port 7800 -rpc-secret SECRET -max-retries 10 -n 4 -p 1 -o ~/Downloads -s ./script.sh
 ```
