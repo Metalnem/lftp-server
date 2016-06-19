@@ -130,6 +130,10 @@ func makeCmd(url *url.URL, username, password string) *exec.Cmd {
 }
 
 func makeScriptCmd(path string) (*exec.Cmd, error) {
+	if *s == "" {
+		return nil, nil
+	}
+
 	scriptPath, err := filepath.Abs(*s)
 
 	if err != nil {
